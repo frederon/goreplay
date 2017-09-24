@@ -38,8 +38,13 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		return payload
 	}
 
+	// Allow all GET method.
+	method := proto.Method(payload)
+	if bytes.Equal(method, []byte("GET")) {
+		return payload
+	}
+
 	if len(m.config.methods) > 0 {
-		method := proto.Method(payload)
 
 		matched := false
 
