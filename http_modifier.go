@@ -38,14 +38,20 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		return payload
 	}
 
-	// Allow all GET method.
-	method := proto.Method(payload)
-	if bytes.Equal(method, []byte("GET")) {
-		return payload
+	methodMatched := false
+	if len(m.config.methodsLateFilter) > 0 {
+		method := proto.Method(payload)
+
+		for _, m := range m.config.methodsLateFilter {
+			if bytes.Equal(method, m) {
+				methodMatched = true
+				break
+			}
+		}
 	}
 
-	if len(m.config.methods) > 0 {
-
+	if !methodMatched && len(m.config.methods) > 0 {
+		method := proto.Method(payload)
 		matched := false
 
 		for _, m := range m.config.methods {
@@ -72,7 +78,7 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		}
 	}
 
-	if len(m.config.urlRegexp) > 0 {
+	if !methodMatched && len(m.config.urlRegexp) > 0 {
 		path := proto.Path(payload)
 
 		matched := false

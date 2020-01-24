@@ -188,6 +188,8 @@ func init() {
 	flag.Var(&Settings.modifierConfig.methods, "http-allow-method", "Whitelist of HTTP methods to replay. Anything else will be dropped:\n\tgor --input-raw :8080 --output-http staging.com --http-allow-method GET --http-allow-method OPTIONS")
 	flag.Var(&Settings.modifierConfig.methods, "output-http-method", "WARNING: `--output-http-method` DEPRECATED, use `--http-allow-method` instead")
 
+	flag.Var(&Settings.modifierConfig.methodsLateFilter, "http-allow-method-late-filter", "Whitelist of HTTP methods to replay. Anything else will be dropped according to filters (bypasses --http-allow-url and --http-allow-method if method matches, but is filtered by --http-disallow-url and all subsequent filters):\n\tgor --input-raw :8080 --output-http staging.com --http-allow-method-late-filter GET --http-disallow-url ^.*search.*$")
+
 	flag.Var(&Settings.modifierConfig.urlRegexp, "http-allow-url", "A regexp to match requests against. Filter get matched against full url with domain. Anything else will be dropped:\n\t gor --input-raw :8080 --output-http staging.com --http-allow-url ^www.")
 	flag.Var(&Settings.modifierConfig.urlRegexp, "output-http-url-regexp", "WARNING: `--output-http-url-regexp` DEPRECATED, use `--http-allow-url` instead")
 

@@ -23,6 +23,7 @@ type HTTPModifierConfig struct {
 	params  HTTPParams
 	headers HTTPHeaders
 	methods HTTPMethods
+	methodsLateFilter HTTPMethods
 }
 
 //
@@ -183,7 +184,7 @@ func (h *HTTPParams) Set(value string) error {
 }
 
 //
-// Handling of --http-allow-method option
+// Handling of --http-allow-method and --http-allow-method-late-filter options
 //
 type HTTPMethods [][]byte
 
