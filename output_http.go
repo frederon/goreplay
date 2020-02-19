@@ -161,13 +161,13 @@ func (o *HTTPOutput) Write(data []byte) (n int, err error) {
 		o.queueStats.Write(len(o.queue))
 	}
 
-	if o.config.workersMax != o.config.workersMin {
+	if o.config.workersMax != o.config.workersMin || o.config.workersMax == 0 {
 		workersCount := int(atomic.LoadInt64(&o.activeWorkers))
 
 		if len(o.queue) > workersCount {
 			extraWorkersReq := len(o.queue) - workersCount + 1
 			maxWorkersAvailable := o.config.workersMax - workersCount
-			if extraWorkersReq > maxWorkersAvailable {
+			if extraWorkersReq > maxWorkersAvailable && o.config.workersMax != 0 {
 				extraWorkersReq = maxWorkersAvailable
 			}
 			if extraWorkersReq > 0 {
