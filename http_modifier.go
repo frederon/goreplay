@@ -78,6 +78,7 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		}
 	}
 
+    positiveUrlRegexpMatched := false
 	if !methodMatched && len(m.config.urlRegexp) > 0 {
 		path := proto.Path(payload)
 
@@ -93,6 +94,7 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		if !matched {
 			return
 		}
+		positiveUrlRegexpMatched = true
 	}
 
 	if len(m.config.urlNegativeRegexp) > 0 {
@@ -201,6 +203,10 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 				payload = proto.SetHeader(payload, f.header, newValue)
 			}
 		}
+	}
+
+	if !positiveUrlRegexpMatched && !methodMatched && len(m.config.methodsLateFilter) > 0 {
+	    return
 	}
 
 	return payload
