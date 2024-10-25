@@ -364,6 +364,10 @@ func (i *FileInput) emit() {
 				firstWait = diff
 			}
 
+			if diff <= 0 {
+				log.Printf("Could not send request in time\n")
+			}
+
 			if i.speedFactor != 1 {
 				diff = int64(float64(diff) / i.speedFactor)
 			}

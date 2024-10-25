@@ -22,6 +22,7 @@ type HTTPModifierConfig struct {
 	Params                 HTTPParams                 `json:"http-set-param"`
 	Headers                HTTPHeaders                `json:"http-set-header"`
 	Methods                HTTPMethods                `json:"http-allow-method"`
+	MethodsLateFilter      HTTPMethods                `json:"http-allow-method-late-filter"`
 }
 
 // Handling of --http-allow-header, --http-disallow-header options
@@ -182,7 +183,7 @@ func (h *HTTPParams) Set(value string) error {
 }
 
 //
-// Handling of --http-allow-method option
+// Handling of --http-allow-method and --http-allow-method-late-filter options
 //
 
 // HTTPMethods holds values for method allowed
