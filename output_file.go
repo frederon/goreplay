@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -15,7 +16,24 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/buger/goreplay/size"
 )
+
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+var instanceID string
+
+func init() {
+	instanceID = randSeq(8)
+}
+
+func randSeq(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
 
 var dateFileNameFuncs = map[string]func(*FileOutput) string{
 	"%Y":  func(o *FileOutput) string { return time.Now().Format("2006") },
@@ -27,30 +45,34 @@ var dateFileNameFuncs = map[string]func(*FileOutput) string{
 	"%NS": func(o *FileOutput) string { return fmt.Sprint(time.Now().Nanosecond()) },
 	"%r":  func(o *FileOutput) string { return string(o.currentID) },
 	"%t":  func(o *FileOutput) string { return string(o.payloadType) },
+	"%i":  func(o *FileOutput) string { return instanceID },
 }
 
+// FileOutputConfig ...
 type FileOutputConfig struct {
-	flushInterval     time.Duration
-	sizeLimit         unitSizeVar
-	outputFileMaxSize unitSizeVar
-	queueLimit        int
-	append            bool
+	FlushInterval     time.Duration `json:"output-file-flush-interval"`
+	SizeLimit         size.Size     `json:"output-file-size-limit"`
+	OutputFileMaxSize size.Size     `json:"output-file-max-size-limit"`
+	QueueLimit        int           `json:"output-file-queue-limit"`
+	Append            bool          `json:"output-file-append"`
+	BufferPath        string        `json:"output-file-buffer"`
+	onClose           func(string)
 }
 
 // FileOutput output plugin
 type FileOutput struct {
-	mu             sync.Mutex
-	pathTemplate   string
-	currentName    string
-	file           *os.File
-	queueLength    int
-	chunkSize      int
-	writer         io.Writer
-	requestPerFile bool
-	currentID      []byte
-	payloadType    []byte
-	closed         bool
-	totalFileSize  int64
+	sync.RWMutex
+	pathTemplate    string
+	currentName     string
+	file            *os.File
+	QueueLength     int
+	writer          io.Writer
+	requestPerFile  bool
+	currentID       []byte
+	payloadType     []byte
+	closed          bool
+	currentFileSize int
+	totalFileSize   size.Size
 
 	config *FileOutputConfig
 }
@@ -66,10 +88,14 @@ func NewFileOutput(pathTemplate string, config *FileOutputConfig) *FileOutput {
 		o.requestPerFile = true
 	}
 
+	if config.FlushInterval == 0 {
+		config.FlushInterval = 100 * time.Millisecond
+	}
+
 	go func() {
 		for {
-			time.Sleep(config.flushInterval)
-			if o.closed {
+			time.Sleep(config.FlushInterval)
+			if o.IsClosed() {
 				break
 			}
 			o.updateName()
@@ -134,8 +160,8 @@ func (s sortByFileIndex) Less(i, j int) bool {
 }
 
 func (o *FileOutput) filename() string {
-	defer o.mu.Unlock()
-	o.mu.Lock()
+	o.RLock()
+	defer o.RUnlock()
 
 	path := o.pathTemplate
 
@@ -143,12 +169,12 @@ func (o *FileOutput) filename() string {
 		path = strings.Replace(path, name, fn(o), -1)
 	}
 
-	if !o.config.append {
+	if !o.config.Append {
 		nextChunk := false
 
 		if o.currentName == "" ||
-			((o.config.queueLimit > 0 && o.queueLength >= o.config.queueLimit) ||
-				(o.config.sizeLimit > 0 && o.chunkSize >= int(o.config.sizeLimit))) {
+			((o.config.QueueLimit > 0 && o.QueueLength >= o.config.QueueLimit) ||
+				(o.config.SizeLimit > 0 && o.currentFileSize >= int(o.config.SizeLimit))) {
 			nextChunk = true
 		}
 
@@ -180,21 +206,28 @@ func (o *FileOutput) filename() string {
 }
 
 func (o *FileOutput) updateName() {
-	o.currentName = filepath.Clean(o.filename())
+	name := filepath.Clean(o.filename())
+	o.Lock()
+	o.currentName = name
+	o.Unlock()
 }
 
-func (o *FileOutput) Write(data []byte) (n int, err error) {
+// PluginWrite writes message to this plugin
+func (o *FileOutput) PluginWrite(msg *Message) (n int, err error) {
 	if o.requestPerFile {
-		meta := payloadMeta(data)
+		o.Lock()
+		meta := payloadMeta(msg.Meta)
 		o.currentID = meta[1]
 		o.payloadType = meta[0]
+		o.Unlock()
 	}
 
 	o.updateName()
+	o.Lock()
+	defer o.Unlock()
 
 	if o.file == nil || o.currentName != o.file.Name() {
-		o.mu.Lock()
-		o.Close()
+		o.closeLocked()
 
 		o.file, err = os.OpenFile(o.currentName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0660)
 		o.file.Sync()
@@ -209,33 +242,37 @@ func (o *FileOutput) Write(data []byte) (n int, err error) {
 			log.Fatal(o, "Cannot open file %q. Error: %s", o.currentName, err)
 		}
 
-		o.queueLength = 0
-		o.mu.Unlock()
+		o.QueueLength = 0
 	}
 
-	o.writer.Write(data)
-	o.writer.Write([]byte(payloadSeparator))
+	var nn int
+	n, err = o.writer.Write(msg.Meta)
+	nn, err = o.writer.Write(msg.Data)
+	n += nn
+	nn, err = o.writer.Write(payloadSeparatorAsBytes)
+	n += nn
 
-	o.totalFileSize += int64(len(data) + len(payloadSeparator))
-	o.queueLength++
+	o.totalFileSize += size.Size(n)
+	o.currentFileSize += n
+	o.QueueLength++
 
-	if Settings.outputFileConfig.outputFileMaxSize > 0 && o.totalFileSize >= int64(Settings.outputFileConfig.outputFileMaxSize) {
-		return len(data), errors.New("File output reached size limit")
+	if Settings.OutputFileConfig.OutputFileMaxSize > 0 && o.totalFileSize >= Settings.OutputFileConfig.OutputFileMaxSize {
+		return n, errors.New("File output reached size limit")
 	}
 
-	return len(data), nil
+	return n, err
 }
 
 func (o *FileOutput) flush() {
 	// Don't exit on panic
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("PANIC while file flush: ", r, o, string(debug.Stack()))
+			Debug(0, "[OUTPUT-FILE] PANIC while file flush: ", r, o, string(debug.Stack()))
 		}
 	}()
 
-	defer o.mu.Unlock()
-	o.mu.Lock()
+	o.Lock()
+	defer o.Unlock()
 
 	if o.file != nil {
 		if strings.HasSuffix(o.currentName, ".gz") {
@@ -245,9 +282,9 @@ func (o *FileOutput) flush() {
 		}
 
 		if stat, err := o.file.Stat(); err == nil {
-			o.chunkSize = int(stat.Size())
+			o.currentFileSize = int(stat.Size())
 		} else {
-			log.Println("Error accessing file sats", err)
+			Debug(0, "[OUTPUT-HTTP] error accessing file size", err)
 		}
 	}
 }
@@ -256,7 +293,7 @@ func (o *FileOutput) String() string {
 	return "File output: " + o.file.Name()
 }
 
-func (o *FileOutput) Close() error {
+func (o *FileOutput) closeLocked() error {
 	if o.file != nil {
 		if strings.HasSuffix(o.currentName, ".gz") {
 			o.writer.(*gzip.Writer).Close()
@@ -264,8 +301,28 @@ func (o *FileOutput) Close() error {
 			o.writer.(*bufio.Writer).Flush()
 		}
 		o.file.Close()
+
+		if o.config.onClose != nil {
+			o.config.onClose(o.file.Name())
+		}
 	}
 
 	o.closed = true
+	o.currentFileSize = 0
+
 	return nil
+}
+
+// Close closes the output file that is being written to.
+func (o *FileOutput) Close() error {
+	o.Lock()
+	defer o.Unlock()
+	return o.closeLocked()
+}
+
+// IsClosed returns if the output file is closed or not.
+func (o *FileOutput) IsClosed() bool {
+	o.Lock()
+	defer o.Unlock()
+	return o.closed
 }
