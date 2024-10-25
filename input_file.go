@@ -9,6 +9,7 @@ import (
 	"expvar"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"path/filepath"

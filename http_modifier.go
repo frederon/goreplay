@@ -204,8 +204,8 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		}
 	}
 
-	if !positiveUrlRegexpMatched && !methodMatched && len(m.config.methodsLateFilter) > 0 {
-	    return
+	if !positiveUrlRegexpMatched && !methodMatched && len(m.config.MethodsLateFilter) > 0 {
+		return
 	}
 
 	return payload
